@@ -11,7 +11,7 @@ class TransactionManager {
     /**
      * Get transactions with pagination and filtering
      */
-    public function getTransactions($page = 1, $per_page = 20, $date_from = null, $date_to = null, $status_filter = null) {
+    public function getTransactions($page = 1, $per_page = 20, $date_from = null, $date_to = null, $status_filter = null, $staff_filter = null) {
         $offset = ($page - 1) * $per_page;
         
         $where_conditions = [];
@@ -19,11 +19,21 @@ class TransactionManager {
         
         // Base condition for pending transactions
         if ($status_filter === 'pending') {
-            $where_conditions[] = "(leasing_post_status = 'Pending' OR approval_status = 'Pending')";
+            $where_conditions[] = "leasing_post_status = 'Pending'";
+        } elseif ($status_filter === 'fc_pending') {
+            $where_conditions[] = "approval_status = 'Pending'";
+        } elseif ($status_filter === 'audit_pending') {
+            $where_conditions[] = "approval_status = 'Approved' AND verification_status = 'Pending'";
         } elseif ($status_filter === 'declined') {
             $where_conditions[] = "(approval_status = 'Declined' OR verification_status = 'Declined' OR leasing_post_status = 'Declined')";
         } elseif ($status_filter === 'approved') {
             $where_conditions[] = "approval_status = 'Approved' AND verification_status = 'Verified'";
+        }
+        
+        // Staff filtering
+        if ($staff_filter) {
+            $where_conditions[] = "posting_officer_id = :staff_filter";
+            $params[':staff_filter'] = $staff_filter;
         }
         
         // Date filtering
@@ -61,16 +71,25 @@ class TransactionManager {
     /**
      * Get total count for pagination
      */
-    public function getTransactionCount($date_from = null, $date_to = null, $status_filter = null) {
+    public function getTransactionCount($date_from = null, $date_to = null, $status_filter = null, $staff_filter = null) {
         $where_conditions = [];
         $params = [];
         
         if ($status_filter === 'pending') {
-            $where_conditions[] = "(leasing_post_status = 'Pending' OR approval_status = 'Pending')";
+            $where_conditions[] = "leasing_post_status = 'Pending'";
+        } elseif ($status_filter === 'fc_pending') {
+            $where_conditions[] = "approval_status = 'Pending'";
+        } elseif ($status_filter === 'audit_pending') {
+            $where_conditions[] = "approval_status = 'Approved' AND verification_status = 'Pending'";
         } elseif ($status_filter === 'declined') {
             $where_conditions[] = "(approval_status = 'Declined' OR verification_status = 'Declined' OR leasing_post_status = 'Declined')";
         } elseif ($status_filter === 'approved') {
             $where_conditions[] = "approval_status = 'Approved' AND verification_status = 'Verified'";
+        }
+        
+        if ($staff_filter) {
+            $where_conditions[] = "posting_officer_id = :staff_filter";
+            $params[':staff_filter'] = $staff_filter;
         }
         
         if ($date_from && $date_to) {
@@ -493,6 +512,151 @@ class TransactionManager {
             return $diff->i . ' minute' . ($diff->i > 1 ? 's' : '') . ' ago';
         } else {
             return 'Just now';
+        }
+    }
+    
+    /**
+     * Review approve transaction (Account department)
+     */
+    public function reviewApproveTransaction($transaction_id, $reviewer_id, $reviewer_name) {
+        $this->db->beginTransaction();
+        
+        try {
+            $now = date('Y-m-d H:i:s');
+            
+            $this->db->query("
+                UPDATE account_general_transaction_new 
+                SET leasing_post_status = 'Approved',
+                    leasing_post_approving_officer_id = :reviewer_id,
+                    leasing_post_approving_officer_name = :reviewer_name,
+                    leasing_post_approval_time = :approval_time,
+                    approval_status = 'Pending'
+                WHERE id = :transaction_id
+            ");
+            
+            $this->db->bind(':reviewer_id', $reviewer_id);
+            $this->db->bind(':reviewer_name', $reviewer_name);
+            $this->db->bind(':approval_time', $now);
+            $this->db->bind(':transaction_id', $transaction_id);
+            
+            $this->db->execute();
+            $this->db->endTransaction();
+            
+            return ['success' => true, 'message' => 'Transaction reviewed and moved to FC for approval'];
+            
+        } catch (Exception $e) {
+            $this->db->cancelTransaction();
+            return ['success' => false, 'message' => 'Error reviewing transaction: ' . $e->getMessage()];
+        }
+    }
+    
+    /**
+     * Review decline transaction (Account department)
+     */
+    public function reviewDeclineTransaction($transaction_id, $reviewer_id, $reviewer_name, $reason = '') {
+        $this->db->beginTransaction();
+        
+        try {
+            $now = date('Y-m-d H:i:s');
+            
+            $this->db->query("
+                UPDATE account_general_transaction_new 
+                SET leasing_post_status = 'Declined',
+                    leasing_post_approving_officer_id = :reviewer_id,
+                    leasing_post_approving_officer_name = :reviewer_name,
+                    leasing_post_approval_time = :approval_time,
+                    decline_reason = :reason
+                WHERE id = :transaction_id
+            ");
+            
+            $this->db->bind(':reviewer_id', $reviewer_id);
+            $this->db->bind(':reviewer_name', $reviewer_name);
+            $this->db->bind(':approval_time', $now);
+            $this->db->bind(':reason', $reason);
+            $this->db->bind(':transaction_id', $transaction_id);
+            
+            $this->db->execute();
+            $this->db->endTransaction();
+            
+            return ['success' => true, 'message' => 'Transaction declined during review'];
+            
+        } catch (Exception $e) {
+            $this->db->cancelTransaction();
+            return ['success' => false, 'message' => 'Error declining transaction: ' . $e->getMessage()];
+        }
+    }
+    
+    /**
+     * Flag transaction
+     */
+    public function flagTransaction($transaction_id, $auditor_id, $auditor_name, $flag_reason = '') {
+        $this->db->beginTransaction();
+        
+        try {
+            $now = date('Y-m-d H:i:s');
+            
+            $this->db->query("
+                UPDATE account_general_transaction_new 
+                SET verification_status = 'Flagged',
+                    flag_status = 'Flagged',
+                    verifying_auditor_id = :auditor_id,
+                    verifying_auditor_name = :auditor_name,
+                    verification_time = :verification_time,
+                    flag_reason = :flag_reason
+                WHERE id = :transaction_id
+            ");
+            
+            $this->db->bind(':auditor_id', $auditor_id);
+            $this->db->bind(':auditor_name', $auditor_name);
+            $this->db->bind(':verification_time', $now);
+            $this->db->bind(':flag_reason', $flag_reason);
+            $this->db->bind(':transaction_id', $transaction_id);
+            
+            $this->db->execute();
+            $this->db->endTransaction();
+            
+            return ['success' => true, 'message' => 'Transaction flagged successfully'];
+            
+        } catch (Exception $e) {
+            $this->db->cancelTransaction();
+            return ['success' => false, 'message' => 'Error flagging transaction: ' . $e->getMessage()];
+        }
+    }
+    
+    /**
+     * Update transaction
+     */
+    public function updateTransaction($data) {
+        $this->db->beginTransaction();
+        
+        try {
+            $this->db->query("
+                UPDATE account_general_transaction_new 
+                SET transaction_desc = :transaction_desc,
+                    amount_paid = :amount_paid,
+                    receipt_no = :receipt_no,
+                    no_of_tickets = :no_of_tickets,
+                    plate_no = :plate_no,
+                    shop_no = :shop_no
+                WHERE id = :transaction_id
+            ");
+            
+            $this->db->bind(':transaction_desc', $data['transaction_desc']);
+            $this->db->bind(':amount_paid', $data['amount_paid']);
+            $this->db->bind(':receipt_no', $data['receipt_no']);
+            $this->db->bind(':no_of_tickets', $data['no_of_tickets']);
+            $this->db->bind(':plate_no', $data['plate_no']);
+            $this->db->bind(':shop_no', $data['shop_no']);
+            $this->db->bind(':transaction_id', $data['transaction_id']);
+            
+            $this->db->execute();
+            $this->db->endTransaction();
+            
+            return ['success' => true, 'message' => 'Transaction updated successfully'];
+            
+        } catch (Exception $e) {
+            $this->db->cancelTransaction();
+            return ['success' => false, 'message' => 'Error updating transaction: ' . $e->getMessage()];
         }
     }
 }
