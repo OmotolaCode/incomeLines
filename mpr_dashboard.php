@@ -37,6 +37,15 @@ class MPRDashboard {
         $this->db->bind(':year', $current_year);
         $revenue = $this->db->single();
         
+        // Total revenue this year
+        $this->db->query("
+            SELECT COALESCE(SUM(amount_paid), 0) as yearly_revenue
+            FROM account_general_transaction_new 
+            WHERE YEAR(date_of_payment) = :year
+        ");
+        $this->db->bind(':year', $current_year);
+        $yearly_revenue = $this->db->single();
+        
         // Total transactions this month
         $this->db->query("
             SELECT COUNT(*) as total_transactions
@@ -81,6 +90,7 @@ class MPRDashboard {
         
         return [
             'total_revenue' => $revenue['total_revenue'],
+            'yearly_revenue' => $yearly_revenue['yearly_revenue'],
             'total_transactions' => $transactions['total_transactions'],
             'active_lines' => $active_lines['active_lines'],
             'growth_rate' => $growth_rate,
@@ -213,7 +223,7 @@ $alerts = $dashboard->getManagementAlerts();
         </div>
 
         <!-- Quick Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
             <div class="bg-white rounded-lg shadow-md p-6">
                 <div class="flex items-center">
                     <div class="p-3 rounded-full bg-green-100 text-green-600">
@@ -225,6 +235,19 @@ $alerts = $dashboard->getManagementAlerts();
                         <p class="text-xs <?php echo $summary['growth_rate'] >= 0 ? 'text-green-600' : 'text-red-600'; ?>">
                             <?php echo $summary['growth_rate'] >= 0 ? '+' : ''; ?><?php echo number_format($summary['growth_rate'], 1); ?>% from last month
                         </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-indigo-100 text-indigo-600">
+                        <i class="fas fa-chart-line text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-500">Yearly Revenue</p>
+                        <p class="text-2xl font-bold text-gray-900">₦<?php echo number_format($summary['yearly_revenue']); ?></p>
+                        <p class="text-xs text-gray-500"><?php echo date('Y'); ?> Total</p>
                     </div>
                 </div>
             </div>
@@ -295,6 +318,29 @@ $alerts = $dashboard->getManagementAlerts();
             </div>
         </div>
         <?php endif; ?>
+
+        <!-- Officer Performance Quick Access -->
+        <div class="mb-8">
+            <div class="bg-gradient-to-r from-green-600 to-blue-600 rounded-lg shadow-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-xl font-bold mb-2">
+                            <i class="fas fa-users mr-2"></i>
+                            Officer Performance Analysis
+                        </h3>
+                        <p class="text-green-100">Monitor and analyze individual officer collection performance</p>
+                    </div>
+                    <div>
+                        <a href="officer_performance.php" 
+                           class="inline-flex items-center px-6 py-3 bg-white text-green-600 font-semibold rounded-lg hover:bg-gray-100 transition-colors shadow-lg">
+                            <i class="fas fa-chart-bar mr-2"></i>
+                            View Officer Performance
+                            <i class="fas fa-arrow-right ml-2"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- Main Dashboard Sections -->
         <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8">
@@ -458,7 +504,7 @@ $alerts = $dashboard->getManagementAlerts();
                             <i class="fas fa-users text-blue-600 mr-3"></i>
                             <span class="font-medium text-gray-900">Staff Performance</span>
                         </div>
-                        <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">Coming Soon</span>
+                        <i class="fas fa-chevron-right text-gray-400"></i>
                     </a>
                     
                     <a href="collection_efficiency.php" 
